@@ -1,0 +1,13 @@
+MetaTrader5>=5.0.44
+numpy>=1.26.4
+pandas>=2.2.2
+# TA-Lib>=0.4.0
+scikit-learn>=1.5.0
+tensorflow>=2.16.1
+matplotlib>=3.8.4
+plotly>=5.22.0
+ray>=2.9.3
+pyyaml>=6.0.1
+requests>=2.32.3
+python-telegram-bot>=21.0.1
+slack_sdk>=3.27.0

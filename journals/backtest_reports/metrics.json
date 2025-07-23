@@ -1,0 +1,17 @@
+{
+  "win_rate": 0.65,
+  "risk_reward_ratio": 1.5,
+  "max_drawdown": 0.08,
+  "monthly_roi": 0.12,
+  "total_trades": 150,
+  "profitable_trades": 98,
+  "losing_trades": 52,
+  "average_trade_duration": "2 hours",
+  "total_profit": 300,
+  "total_loss": -150,
+  "net_profit": 150,
+  "trading_period": {
+    "start_date": "2023-01-01",
+    "end_date": "2023-12-31"
+  }
+}

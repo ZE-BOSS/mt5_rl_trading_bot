@@ -1,0 +1,39 @@
+symbols:
+  - EURUSD
+  - GBPUSD
+  - XAUUSD
+  - DAX
+  - FTSE
+
+risk_parameters:
+  max_drawdown: 10
+  risk_per_trade: 0.02
+  lot_size: dynamic
+
+trading_settings:
+  slippage: 3
+  leverage: 100
+  commission: 0.0005
+
+logging:
+  log_level: INFO
+  log_file: logs/trading_bot.log
+
+notifications:
+  enable: true
+  telegram_chat_id: "YOUR_TELEGRAM_CHAT_ID"
+  telegram_token: "YOUR_TELEGRAM_BOT_TOKEN"
+
+schedule:
+  trading_days: [Monday, Tuesday, Wednesday, Thursday, Friday]
+  start_time: "07:00"
+  end_time: "17:00"
+  orb_window: "07:00-07:30"
+  avoid_times:
+    - "12:00-06:00"
+    - "12:00-13:30"
+    - "Friday 12:00-23:59"
+
+rl_parameters:
+  action_size: 2
+  state_size: 10

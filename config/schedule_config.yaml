@@ -1,0 +1,30 @@
+trading_sessions:
+  - day: Sunday
+    time: "20:00-22:00"
+    action: "Analyze weekly charts, mark major S/R zones"
+  - day: Monday
+    time: "06:00-07:00"
+    action: "Finalize S/R, scan for patterns"
+  - day: Monday
+    time: "07:00-11:00"
+    action: "TRADE ORB setups ONLY"
+  - day: Tuesday
+    time: "07:00-11:00"
+    action: "TRADE ORB setups ONLY"
+  - day: Wednesday
+    time: "07:00-11:00"
+    action: "TRADE ORB setups ONLY"
+  - day: Thursday
+    time: "07:00-11:00"
+    action: "TRADE ORB setups ONLY"
+  - day: Friday
+    time: "07:00-10:00"
+    action: "Trade high-conviction setups only; close all trades by 12 PM"
+  
+dead_zones:
+  - time: "00:00-06:00"
+    description: "Do not trade during Asian session"
+  - time: "12:00-13:30"
+    description: "Do not trade during lunch lull"
+  - time: "High-impact news"
+    description: "Avoid trading during high-impact news events"
