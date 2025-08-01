@@ -1,13 +1,22 @@
 learning_rate: 0.001
 discount_factor: 0.99
+batch_size: 32
+memory_size: 100000
+update_target_frequency: 1000
+training_steps: 50000
+model_save_path: "models/production/rl_model_{timestamp}.h5"
+
 exploration_strategy:
   type: epsilon_greedy
   initial_epsilon: 1.0
   final_epsilon: 0.01
   decay_steps: 10000
-batch_size: 32
-memory_size: 100000
-update_target_frequency: 1000
-training_steps: 50000
-reward_scaling: 1.0
-model_save_path: "models/production/rl_model.h5"
+  decay_type: linear
+
+network_architecture:
+  layers: [128, 64]
+  activation: 'relu'
+
+validation:
+  test_size: 0.2
+  shuffle: false

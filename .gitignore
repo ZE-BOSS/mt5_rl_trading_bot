@@ -1,0 +1,21 @@
+# Environment
+.env
+.secrets.key
+
+# Data
+data/
+models/
+journals/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# IDEs
+.idea/
+.vscode/
+
+# Logs
+*.log

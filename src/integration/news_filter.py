@@ -1,46 +1,59 @@
+import os
 import requests
-import pandas as pd
 from datetime import datetime, timedelta
 
 class NewsFilter:
-    def __init__(self, api_key, symbols, impact_levels=['high']):
-        self.api_key = api_key
+    def __init__(self, symbols, impact_levels=['high', 'medium']):
         self.symbols = symbols
         self.impact_levels = impact_levels
-        self.news_data = None
-
-    def fetch_news(self):
-        url = f"https://newsapi.org/v2/everything?q=forex&apiKey={self.api_key}"
-        response = requests.get(url)
-        if response.status_code == 200:
-            self.news_data = response.json().get('articles', [])
-        else:
-            print("Failed to fetch news data.")
-
-    def filter_high_impact_news(self):
-        if self.news_data is None:
-            self.fetch_news()
+        self.currency_map = {
+            'EURUSD': ['EUR', 'USD'],
+            'GBPUSD': ['GBP', 'USD'],
+            'XAUUSD': ['XAU', 'USD'],
+            'GER40': ['EUR'],
+            'UK100': ['GBP']
+        }
         
-        filtered_news = []
-        for article in self.news_data:
-            if any(impact in article['title'].lower() for impact in self.impact_levels):
-                filtered_news.append(article)
-        
-        return filtered_news
+        self.api_key = os.getenv('ECONOMIC_CALENDAR_API_KEY')
+        self.events = self.fetch_economic_events()
 
-    def get_upcoming_news(self, days_ahead=1):
-        upcoming_news = []
-        today = datetime.now()
-        for article in self.filter_high_impact_news():
-            news_date = datetime.fromisoformat(article['publishedAt'].replace('Z', '+00:00'))
-            if today <= news_date <= today + timedelta(days=days_ahead):
-                upcoming_news.append(article)
+    def fetch_economic_events(self, hours_ahead=12):
+        if not self.api_key:
+            return []
+            
+        now = datetime.utcnow()
+        end = now + timedelta(hours=hours_ahead)
+        url = "https://economic-calendar-api.com/events"
+        params = {
+            'start': now.isoformat(),
+            'end': end.isoformat(),
+            'importance': ','.join(self.impact_levels),
+            'api_key': self.api_key
+        }
         
-        return upcoming_news
+        try:
+            response = requests.get(url, params=params, timeout=3)
+            return response.json().get('events', [])
+        except:
+            return []
 
-    def display_news(self, news_list):
-        for news in news_list:
-            print(f"Title: {news['title']}")
-            print(f"Published At: {news['publishedAt']}")
-            print(f"Source: {news['source']['name']}")
-            print(f"Link: {news['url']}\n")
+    def is_high_impact_event(self, symbol):
+        if not self.events:
+            return False
+            
+        current_time = datetime.utcnow()
+        for event in self.events:
+            # Check currency match
+            currency = event.get('currency', '')
+            if currency not in self.currency_map.get(symbol, []):
+                continue
+                
+            # Check time window
+            event_time = datetime.fromisoformat(event['date'].replace('Z', ''))
+            window_start = event_time - timedelta(minutes=15)
+            window_end = event_time + timedelta(minutes=30)
+            
+            if window_start <= current_time <= window_end:
+                return True
+                
+        return False

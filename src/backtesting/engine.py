@@ -1,38 +1,219 @@
 import pandas as pd
+from src.utils.logger import Logger
+import matplotlib.pyplot as plt
 
-class ORBStrategyWrapper:
-    """
-    Wraps OpeningRangeBreakout and dependencies for backtesting with historical data.
-    """
-    def __init__(self, orb_strategy, risk_manager, pattern_detector, sr_levels):
+logger = Logger('backtest_reports/trading_bot.log')
+
+class HybridStrategyWrapper:
+    def __init__(self, orb_strategy, risk_manager, pattern_detector, sr_levels, rl_agent, env, historical_data, symbol):
         self.orb_strategy = orb_strategy
         self.risk_manager = risk_manager
         self.pattern_detector = pattern_detector
         self.sr_levels = sr_levels
+        self.rl_agent = rl_agent
+        self.env = env
+        self.historical_data = historical_data
+        self.in_trade = False
         self.last_entry_signal = None
+        self.last_action = 0
+        self.symbol = symbol
 
     def should_enter(self, row):
-        # Simulate fetching S/R and patterns from historical row
+        i = row.name
         s_r_levels = self.sr_levels.get_sr_levels(row)
-        patterns = self.pattern_detector.analyze_patterns(pd.DataFrame([row]))
-        if self.orb_strategy.is_setup_valid(row, s_r_levels, patterns):
-            self.last_entry_signal = self.orb_strategy.get_entry_signal(row)
+        patterns = []
+
+        if i >= 2:
+            window = self.historical_data.iloc[i - 2:i + 1]
+            patterns = self.pattern_detector.analyze_patterns(window)
+
+        if not self.orb_strategy.is_setup_valid(row, s_r_levels, patterns):
+            return False
+
+        signal = self.orb_strategy.get_entry_signal(row)
+        if not signal:
+            return False
+
+        state = self.env._get_observation_from_row(row)
+        action = self.rl_agent.select_action(state)
+
+        if action == 1:
+            self.last_entry_signal = signal
+            self.orb_strategy.entry_price = signal["price"]
+            self.orb_strategy.stop_loss_price = signal["stop_loss"]
+            self.orb_strategy.entry_time = row["Time"]
+            self.orb_strategy.current_trade = "long" if signal["direction"] == "buy" else "short"
+            self.in_trade = True
             return True
+
         return False
 
     def should_exit(self, row):
-        # You can add exit logic based on your strategy
-        return self.orb_strategy.should_exit(row)
+        if not self.in_trade or not self.last_entry_signal:
+            return False
+
+        state = self.env._get_observation_from_row(row)
+        action = self.rl_agent.select_action(state)
+
+        if action == 2:
+            self.in_trade = False
+            return {
+                "exit_price": row['Close'],
+                "reason": "RL exit"
+            }
+
+        return False
 
     def calculate_position_size(self, entry_price):
-        return self.risk_manager.calculate_lot_size(self.last_entry_signal)
-    
+        if self.last_entry_signal is None:
+            return 0
+        return self.risk_manager.calculate_lot_size(self.last_entry_signal, self.symbol)
+
+class BacktestEngine:
+    def __init__(self, strategy, historical_data, starting_balance, risk_manager, agent, env, symbol):
+        self.strategy = strategy
+        self.risk_manager = risk_manager
+        self.historical_data = historical_data
+        self.starting_balance = starting_balance
+        self.balance = starting_balance
+        self.agent = agent
+        self.env = env
+        self.equity_curve = []
+        self.results = []
+        self.in_trade = False
+        self.max_drawdown = 0
+        self.peak_balance = starting_balance
+        self.symbol = symbol
+
+    def run_backtest(self):
+        trade_count = 0
+        max_trades = 10
+        min_trades = 3
+        trades_this_week = 0
+        current_week = None
+
+        for index, row in self.historical_data.iterrows():
+            row_week = row['Time'].isocalendar().week
+
+            if current_week is None:
+                current_week = row_week
+
+            if row_week != current_week:
+                if trades_this_week < min_trades:
+                    logger.log(f"⚠️ Agent took only {trades_this_week} trades in week {current_week}. Encourage more trades.")
+                current_week = row_week
+                trades_this_week = 0
+
+            if self.balance <= 0:
+                logger.log("❌ Account balance depleted or zero. Ending backtest early and resetting agent's rewards.")
+                self.env.balance = 0  # Simulate real environment balance collapse
+                self.agent.memory.buffer.clear()  # Clear experience memory for this episode
+                self.equity_curve.append(self.balance)
+                break
+
+            if trade_count >= max_trades:
+                logger.log("✅ Maximum number of trades reached. Ending backtest.")
+                break
+
+            if not self.in_trade and self.strategy.should_enter(row):
+                entry_price = row['Close']
+                position_size = self.strategy.calculate_position_size(entry_price)
+                self.execute_trade(entry_price, position_size, row)
+                logger.log(f'Trade({index}) entered at: {entry_price}, with lot size: {position_size}')
+                self.in_trade = True
+                trade_count += 1
+                trades_this_week += 1
+
+            if self.in_trade:
+                exit_signal = self.strategy.should_exit(row)
+                if isinstance(exit_signal, dict):
+                    exit_price = exit_signal.get("exit_price", row['Close'])
+                    self.close_trade(exit_price, row)
+                    logger.log(f'Trade exited at: {exit_price}')
+                    self.in_trade = False
+
+            self.equity_curve.append(self.balance)
+
+        if not self.results:
+            logger.log("⚠️ No trades were executed or retained during this backtest.")
+
+    def execute_trade(self, entry_price, position_size, row):
+        trade = {
+            'entry_time': row['Time'],
+            'entry_price': entry_price,
+            'position_size': position_size,
+            'exit_price': None,
+            'exit_time': None,
+            'outcome': None,
+            'balance_before': self.balance
+        }
+        self.results.append(trade)
+
+    def close_trade(self, exit_price, row):
+        if self.results:
+            trade = self.results[-1]
+            trade['exit_price'] = exit_price
+            trade['exit_time'] = row['Time']
+
+            price_diff = exit_price - trade['entry_price']
+            pip_multiplier, contract_size = self.risk_manager._get_multiplier_and_contract(self.symbol)
+            pip_diff = price_diff * pip_multiplier
+            pip_value = contract_size / pip_multiplier
+            pnl = pip_diff * pip_value * trade['position_size']
+
+            trade['outcome'] = pnl
+            self.balance += pnl
+            trade['balance_after'] = self.balance
+
+            self.peak_balance = max(self.peak_balance, self.balance)
+            drawdown = self.peak_balance - self.balance
+            self.max_drawdown = max(self.max_drawdown, drawdown)
+
+            logger.log(f"[PnL] Entry: {trade['entry_price']}, Exit: {exit_price}, Size: {trade['position_size']}, PnL: {pnl}")
+
+    def generate_report(self):
+        if not self.results:
+            return pd.DataFrame(columns=[
+                'entry_time', 'entry_price', 'position_size', 'exit_price', 'exit_time', 'outcome',
+                'balance_before', 'balance_after', 'profit_loss', 'max_drawdown', 'starting_balance', 'final_balance', 'total_return', 'total_trades'
+            ])
+
+        report = pd.DataFrame(self.results)
+        report['profit_loss'] = report['outcome'].cumsum()
+        report['max_drawdown'] = self.max_drawdown
+        report['starting_balance'] = self.starting_balance
+        report['final_balance'] = self.balance
+        report['total_return'] = self.balance - self.starting_balance
+        report['total_trades'] = len(report)
+
+        logger.log(f"📈 Starting Balance: {self.starting_balance}")
+        logger.log(f"📈 Final Balance: {self.balance}")
+        logger.log(f"📉 Max Drawdown: {self.max_drawdown}")
+        logger.log(f"📊 Total Return: {self.balance - self.starting_balance}")
+        logger.log(f"📄 Total Trades: {len(report)}")
+
+        return report
+
+    def _plot_equity_curve(self):
+        plt.figure(figsize=(10, 4))
+        plt.plot(self.equity_curve, label="Equity Curve")
+        plt.title("Equity Curve")
+        plt.xlabel("Time Step")
+        plt.ylabel("Account Balance")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.show()
+
+    def evaluate_performance(self):
+        total_profit = sum(trade['outcome'] for trade in self.results if trade['outcome'] is not None)
+        return total_profit / len(self.results) if self.results else 0.0
+
+
 def fetch_mt5_data(symbol, timeframe, start_date, end_date):
-    """
-    Fetch historical OHLCV data from MetaTrader5 and return as a pandas DataFrame.
-    """
     import MetaTrader5 as mt5
     import pandas as pd
+
     if not mt5.initialize():
         raise RuntimeError("MT5 initialize() failed")
     rates = mt5.copy_rates_range(symbol, timeframe, start_date, end_date)
@@ -45,149 +226,3 @@ def fetch_mt5_data(symbol, timeframe, start_date, end_date):
     }, inplace=True)
     df['Time'] = pd.to_datetime(df['Time'], unit='s')
     return df
-
-class RLStrategyWrapper:
-    """
-    Wraps an RL agent to provide should_enter, should_exit, and calculate_position_size for backtesting.
-    """
-    def __init__(self, rl_agent, env):
-        self.rl_agent = rl_agent
-        self.env = env
-        self.last_action = 0
-        self.position_size = 1
-
-    def should_enter(self, row):
-        # Use RL agent to decide action
-        state = self.env._get_observation_from_row(row)
-        action = self.rl_agent.choose_action(state)
-        self.last_action = action
-        return action == 1  # 1 = buy
-
-    def should_exit(self, row):
-        # Use RL agent to decide action
-        state = self.env._get_observation_from_row(row)
-        action = self.rl_agent.choose_action(state)
-        return action == 2  # 2 = sell
-
-    def calculate_position_size(self, entry_price):
-        return self.position_size
-
-def run_rl_backtest_and_train(rl_agent, env, historical_data, episodes=100):
-    """
-    Automates RL agent training and backtesting using the RLStrategyWrapper.
-    """
-    # Train RL agent
-    from src.reinforcement.trainer import Trainer
-    from src.utils.logger import Logger
-    logger = Logger()
-    trainer = Trainer(rl_agent, env, logger)
-    trainer.train(episodes)
-
-    # Backtest RL agent
-    strategy = RLStrategyWrapper(rl_agent, env)
-    engine = BacktestEngine(strategy, historical_data)
-    engine.run_backtest()
-    report = engine.generate_report()
-    logger.log("Backtest complete. Report:")
-    logger.log(report)
-    return report
-from datetime import datetime
-import pandas as pd
-import numpy as np
-
-class BacktestEngine:
-    def __init__(self, strategy, historical_data):
-        self.strategy = strategy
-        self.historical_data = historical_data
-        self.results = []
-
-    def run_backtest(self):
-        for index, row in self.historical_data.iterrows():
-            if self.strategy.should_enter(row):
-                entry_price = row['Close']
-                position_size = self.strategy.calculate_position_size(entry_price)
-                self.execute_trade(entry_price, position_size)
-
-            if self.strategy.should_exit(row):
-                exit_price = row['Close']
-                self.close_trade(exit_price)
-
-    def execute_trade(self, entry_price, position_size):
-        trade = {
-            'entry_time': datetime.now(),
-            'entry_price': entry_price,
-            'position_size': position_size,
-            'exit_price': None,
-            'outcome': None
-        }
-        self.results.append(trade)
-
-    def close_trade(self, exit_price):
-        if self.results:
-            trade = self.results[-1]
-            trade['exit_price'] = exit_price
-            trade['outcome'] = (exit_price - trade['entry_price']) * trade['position_size']
-            trade['exit_time'] = datetime.now()
-
-    def generate_report(self):
-        report = pd.DataFrame(self.results)
-        report['profit_loss'] = report['outcome'].cumsum()
-        return report
-
-    def optimize_strategy(self, param_grid):
-        best_strategy = None
-        best_performance = -np.inf
-
-        for params in param_grid:
-            self.strategy.set_parameters(params)
-            self.run_backtest()
-            performance = self.evaluate_performance()
-
-            if performance > best_performance:
-                best_performance = performance
-                best_strategy = self.strategy
-
-        return best_strategy
-
-    def evaluate_performance(self):
-        total_profit = sum(trade['outcome'] for trade in self.results if trade['outcome'] is not None)
-        return total_profit / len(self.results) if self.results else 0.0
-
-
-# Standalone backtest runner
-if __name__ == "__main__":
-    import pandas as pd
-    from src.core.orb_strategy import OpeningRangeBreakout
-    from src.core.risk_manager import RiskManager
-    from src.core.pattern_detector import PatternDetector
-    from src.core.sr_levels import SupportResistance as SRLevels
-    import MetaTrader5 as mt5
-    from datetime import datetime
-    
-    symbol = 'EURUSDm'
-    timeframe = mt5.TIMEFRAME_M15
-    start_date = datetime(2023, 1, 1)
-    end_date = datetime(2023, 12, 31)
-    historical_data = fetch_mt5_data(symbol, timeframe, start_date, end_date)
-    orb_strategy = OpeningRangeBreakout('07:00', '07:30')
-    account_info = mt5.account_info()
-    account_balance = account_info.balance if account_info is not None else 10000  # fallback to 10k if not available
-    risk_manager = RiskManager(risk_per_trade=0.02, account_balance=account_balance)
-    pattern_detector = PatternDetector()
-    sr_levels = SRLevels(symbol=symbol, timeframe=timeframe)
-    strategy = ORBStrategyWrapper(orb_strategy, risk_manager, pattern_detector, sr_levels)
-    engine = BacktestEngine(strategy, historical_data)
-    engine.run_backtest()
-    report = engine.generate_report()
-    print(report)
-
-    from src.backtesting.optimizer import StrategyOptimizer
-    parameter_grid = {
-        'start_time': ['07:00', '08:00'],
-        'end_time': ['07:30', '08:30'],
-        'risk': [0.01, 0.02]
-    }
-
-    strategy_optimizer = StrategyOptimizer(historical_data)
-    best_params = strategy_optimizer.optimize(parameter_grid)
-    print(f"Best strategy params: {best_params}")

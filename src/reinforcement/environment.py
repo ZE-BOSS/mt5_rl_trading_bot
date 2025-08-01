@@ -3,51 +3,85 @@ import pandas as pd
 from gym import Env, spaces
 
 class TradingEnvironment(Env):
-    def __init__(self, data, initial_balance=500):
-        super(TradingEnvironment, self).__init__()
-        self.data = data
+    def __init__(self, data: pd.DataFrame, initial_balance=10000, window_size=10):
+        super().__init__()
+        self.data = data.reset_index(drop=True)
         self.initial_balance = initial_balance
-        self.current_step = 0
-        self.balance = initial_balance
-        self.position = 0
-        self.done = False
-        
-        # Action space: 0 = hold, 1 = buy, 2 = sell
-        self.action_space = spaces.Discrete(3)
-        
-        # Observation space: [balance, position, current price]
-        self.observation_space = spaces.Box(low=0, high=np.inf, shape=(3,), dtype=np.float32)
+        self.window_size = window_size
+        self.action_space = spaces.Discrete(3)  # 0 = Hold, 1 = Buy, 2 = Sell
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(window_size * 5 + 2,), dtype=np.float32)
+        self.reset()
 
     def reset(self):
-        self.current_step = 0
         self.balance = self.initial_balance
-        self.position = 0
+        self.equity = self.initial_balance
+        self.position = 0  # 1 if long, -1 if short, 0 if flat
+        self.position_price = 0
+        self.current_step = self.window_size
         self.done = False
+        self.total_profit = 0
+        self.trade_history = []
         return self._get_observation()
 
     def step(self, action):
-        current_price = self.data.iloc[self.current_step]['close']
+        row = self.data.iloc[self.current_step]
+        price = row['Close']
+
         reward = 0
-        
-        if action == 1:  # Buy
-            if self.balance > current_price:
-                self.position += 1
-                self.balance -= current_price
-        elif action == 2:  # Sell
-            if self.position > 0:
-                self.position -= 1
-                self.balance += current_price
-        
+        if action == 1 and self.position == 0:  # Buy
+            self.position = 1
+            self.position_price = price
+        elif action == 2 and self.position == 0:  # Sell
+            self.position = -1
+            self.position_price = price
+        elif action == 1 and self.position == -1:  # Close short
+            reward = (self.position_price - price) / self.position_price
+            self.balance += self.balance * reward
+            self.total_profit += reward
+            self.position = 0
+        elif action == 2 and self.position == 1:  # Close long
+            reward = (price - self.position_price) / self.position_price
+            self.balance += self.balance * reward
+            self.total_profit += reward
+            self.position = 0
+
         self.current_step += 1
-        
         if self.current_step >= len(self.data) - 1:
             self.done = True
-        
-        # Calculate reward
-        reward = self.balance + (self.position * current_price) - self.initial_balance
-        
-        return self._get_observation(), reward, self.done, {}
+
+        obs = self._get_observation()
+        return obs, reward, self.done, {}
 
     def _get_observation(self):
-        current_price = self.data.iloc[self.current_step]['close']
-        return np.array([self.balance, self.position, current_price], dtype=np.float32)
+        window = self.data.iloc[self.current_step - self.window_size:self.current_step]
+        features = []
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            features.extend(window[col].values / (window[col].iloc[0] + 1e-6))
+        obs = features + [self.balance / self.initial_balance, self.position]
+        return np.array(obs, dtype=np.float32)
+    
+    def _get_observation_from_row(self, row):
+        """
+        Constructs an observation window ending at the index of `row`.
+        Ensures index is valid and uses correct integer location.
+        """
+        # Convert row.name (which is likely a Timestamp or index label) to integer index
+        try:
+            index = self.data.index.get_loc(row.name)
+        except KeyError:
+            raise ValueError(f"Row index {row.name} not found in DataFrame index.")
+
+        if isinstance(index, slice) or isinstance(index, np.ndarray):
+            raise ValueError(f"Row index {row.name} maps to multiple locations. Ensure index is unique.")
+
+        if index < self.window_size:
+            raise ValueError(f"Index {index} too small for window size {self.window_size}")
+
+        window = self.data.iloc[index - self.window_size:index]
+        features = []
+        for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+            features.extend(window[col].values / (window[col].iloc[0] + 1e-6))
+        obs = features + [self.balance / self.initial_balance, self.position]
+        return np.array(obs, dtype=np.float32)
+
+

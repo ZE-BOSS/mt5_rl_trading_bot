@@ -1,41 +1,47 @@
 import MetaTrader5 as mt5
 import pandas as pd
-import datetime
+import numpy as np
+from datetime import datetime, timedelta
+from src.core.sr_levels import SupportResistance
 
 class DataFetcher:
-    def __init__(self, symbol, timeframe, start_date, end_date):
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.start_date = start_date
-        self.end_date = end_date
-        self.connected = self.connect_to_mt5()
+    def __init__(self, symbols):
+        self.symbols = symbols
+        self.sr_managers = {symbol: SupportResistance(symbol) for symbol in symbols}
+        self.connected = False
 
-    def connect_to_mt5(self):
-        if not mt5.initialize():
-            print("Failed to initialize MT5 connection")
+    def connect(self, mt5_config):
+        if not mt5.initialize(
+            login=int(mt5_config['login']),
+            password=mt5_config['password'],
+            server=mt5_config['server']
+        ):
             return False
+        self.connected = True
         return True
 
-    def fetch_historical_data(self):
-        rates = mt5.copy_rates_range(self.symbol, self.timeframe, self.start_date, self.end_date)
+    def fetch_ohlc_data(self, symbol, bars=100, timeframe=mt5.TIMEFRAME_M15):
+        if not self.connected:
+            return None
+        rates = mt5.copy_rates_from_pos(symbol, timeframe, 0, bars)
         if rates is None:
-            print(f"Failed to fetch historical data for {self.symbol}")
             return None
-        return pd.DataFrame(rates)
+        df = pd.DataFrame(rates)
+        df['time'] = pd.to_datetime(df['time'], unit='s')
+        return df
 
-    def fetch_live_data(self):
-        live_data = mt5.symbol_info_tick(self.symbol)
-        if live_data is None:
-            print(f"Failed to fetch live data for {self.symbol}")
+    def fetch_live_price(self, symbol):
+        if not self.connected:
             return None
-        return live_data
+        tick = mt5.symbol_info_tick(symbol)
+        return (tick.ask + tick.bid)/2
 
-    def fetch_account_details(self):
-        account_info = mt5.account_info()
-        if account_info is None:
-            print("Failed to fetch account details")
-            return None
-        return account_info
+    def get_sr_levels(self, symbol):
+        if symbol not in self.sr_managers:
+            self.sr_managers[symbol] = SupportResistance(symbol)
+        return self.sr_managers[symbol].get_current_levels()
 
     def disconnect(self):
-        mt5.shutdown()
+        if self.connected:
+            mt5.shutdown()
+            self.connected = False

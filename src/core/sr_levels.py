@@ -58,9 +58,5 @@ class SupportResistance:
         resistance = df['High'].max() if not df.empty else row['High']
         # Optionally, add more advanced logic here
         sr_levels = {'support': support, 'resistance': resistance}
+        
         return sr_levels
-
-# Example usage:
-# sr = SupportResistance('EURUSD', mt5.TIMEFRAME_H4)
-# sr.update_sr_levels()
-# print(sr.get_sr_levels())
