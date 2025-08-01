@@ -1,11 +1,11 @@
 # Environment
-.env
-.secrets.key
+# .env
+# .secrets.key
 
 # Data
-data/
-models/
-journals/
+# data/
+# models/
+# journals/
 
 # Python
 __pycache__/

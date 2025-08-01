@@ -74,10 +74,10 @@ class StrategyOptimizer:
 
         strategy = HybridStrategyWrapper(
             orb_strategy, risk_manager, pattern_detector, sr_levels,
-            rl_agent=agent, env=env, historical_data=self.historical_data
+            rl_agent=agent, env=env, historical_data=self.historical_data, symbol=self.symbol
         )
 
-        engine = BacktestEngine(strategy, self.historical_data, self.account_balance)
+        engine = BacktestEngine(strategy, self.historical_data, self.account_balance, symbol=self.symbol)
         engine.run_backtest()
         results = engine.generate_report()
         score, stats = self.evaluate_strategy(results, metric)
