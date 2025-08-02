@@ -17,13 +17,15 @@ from src.core.pattern_detector import PatternDetector
 from src.integration.news_filter import NewsFilter
 from src.integration.notifications import NotificationManager
 
+logger = Logger('api_server.log')
+
 class TradingBot:
     def __init__(self, config_path='config/bot_config.yaml'):
         self.sm = SecretsManager()
         self.load_config(config_path)
         self.logger = Logger()
         self.notifier = NotificationManager()
-        self.reporter = Reporter()
+        self.reporter = Reporter(journal_dir='journals/')
         self.data_fetcher = DataFetcher(self.config['symbols'])
         self.trader = Trader(self.config)
         self.risk_manager = RiskManager(self.config['risk_parameters'])
@@ -39,12 +41,22 @@ class TradingBot:
         with open(config_path, 'r') as file:
             self.config = yaml.safe_load(file)
         
+        # raw_password = os.getenv('MT5_PASSWORD')
+        # if raw_password is None:
+        #     raise ValueError("Environment variable 'MT5_PASSWORD' is not set.")
+
         # Override from .env
         self.config['mt5'] = {
-            'login': os.getenv('MT5_LOGIN'),
-            'password': self.sm.decrypt(os.getenv('MT5_PASSWORD')),
-            'server': os.getenv('MT5_SERVER')
+            'login': "210526788",
+            'password': "S@jasper&12345",
+            'server': "Exness-MT5Trial9"
         }
+
+        # self.config['mt5'] = {
+        #     'login': os.getenv('MT5_LOGIN'),
+        #     'password': self.sm.decrypt(raw_password),
+        #     'server': os.getenv('MT5_SERVER')
+        # }
 
     def init_rl_agent(self):
         if not os.getenv('REINFORCEMENT_LEARNING_ENABLED', 'True') == 'True':
