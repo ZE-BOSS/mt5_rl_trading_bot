@@ -60,6 +60,10 @@ pattern_detector = PatternDetector()
 def run_backtest(episodes, symbol = 'XAUUSDm'):
     start_date = datetime(2024, 1, 1)
     end_date = datetime(2024, 12, 31)
+    
+    # Enhanced trade frequency constraints
+    min_trades_per_week = 3
+    max_trades_per_week = 10
 
     sr_levels = SRLevels(symbol=symbol, timeframe=timeframe)
 
@@ -82,6 +86,11 @@ def run_backtest(episodes, symbol = 'XAUUSDm'):
 
     logger.log('Running hybrid backtest...')
     engine = BacktestEngine(strategy, historical_data, account_balance, risk_manager, agent, env, symbol)
+    
+    # Apply trade frequency constraints
+    engine.min_trades_per_week = min_trades_per_week
+    engine.max_trades_per_week = max_trades_per_week
+    
     engine.run_backtest()
     report = engine.generate_report()
     print(report)
@@ -101,7 +110,7 @@ def run_backtest(episodes, symbol = 'XAUUSDm'):
     parameter_grid = {
         'start_time': ['07:00', '08:00'],
         'end_time': ['07:30', '08:30'],
-        'risk': [0.01, 0.02]
+        'risk': [0.01, 0.02, 0.03]
     }
 
     best_params = strategy_optimizer.optimize(parameter_grid, metric="sharpe")

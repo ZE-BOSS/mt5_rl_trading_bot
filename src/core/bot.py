@@ -3,6 +3,7 @@ import time
 import yaml
 import pytz
 import MetaTrader5 as mt5
+import asyncio
 from datetime import datetime
 from src.utils.secrets_manager import SecretsManager
 from src.core.data_fetcher import DataFetcher
@@ -36,6 +37,28 @@ class TradingBot:
         self.rl_agent = self.init_rl_agent()
         self.open_positions = {}
         self.mt5_connected = False
+
+    async def run_enhanced(self):
+        """Enhanced run method with async support for real-time monitoring"""
+        self.logger.log("Enhanced trading bot started")
+        while True:
+            current_time = datetime.now(pytz.utc)
+            if self.time_manager.is_trading_time(current_time):
+                try:
+                    if not self.mt5_connected:
+                        if not self.connect_to_mt5():
+                            await asyncio.sleep(60)
+                            continue
+                    await self.execute_enhanced_trading_logic()
+                except Exception as e:
+                    self.logger.log_error(f"Trading error: {str(e)}")
+                    self.notifier.send_error_alert(str(e))
+            await asyncio.sleep(10)
+
+    async def execute_enhanced_trading_logic(self):
+        """Enhanced trading logic - placeholder for server.py implementation"""
+        # This method will be overridden in EnhancedTradingBot
+        self.execute_trading_logic()
 
     def load_config(self, config_path):
         with open(config_path, 'r') as file:
